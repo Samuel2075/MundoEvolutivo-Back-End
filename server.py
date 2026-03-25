@@ -8,13 +8,17 @@ import threading
 app = Flask(__name__)
 CORS(
     app,
-    resources={r"/*": {"origins": [
-        "https://mundoevolutivo.netlify.app",
-        "http://localhost:5500",
-        "http://127.0.0.1:5500"
-    ]}},
+    resources={
+        r"/*": {
+            "origins": [
+                "https://mundoevolutivo.netlify.app",
+                "http://localhost:5500",
+                "http://127.0.0.1:5500"
+            ]
+        }
+    },
     methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"]
+    allow_headers=["Content-Type", "Authorization"]
 )
 
 MODEL_PATH = "human_tf_model_ptbr.keras"
@@ -356,7 +360,7 @@ def decide_batch():
     })
 
 
-@app.route("/train_batch", methods=["POST"])
+@app.route("/train_batch", methods=["POST", "OPTIONS"])
 def train_batch():
     data = request.get_json(force=True) or {}
     states = np.array(data.get("states", []), dtype=np.float32)
@@ -388,7 +392,7 @@ def train_batch():
     return jsonify({"status": "trained", "batch_size": batch_size, "loss": loss})
 
 
-@app.route("/inherit_cycle", methods=["POST"])
+@app.route("/inherit_cycle", methods=["POST", "OPTIONS"])
 def inherit_cycle():
     payload = request.get_json(force=True) or {}
     with lock:
@@ -403,7 +407,7 @@ def inherit_cycle():
     })
 
 
-@app.route("/inherit_offspring", methods=["POST"])
+@app.route("/inherit_offspring", methods=["POST", "OPTIONS"])
 def inherit_offspring():
     payload = request.get_json(force=True) or {}
     with lock:
@@ -417,14 +421,14 @@ def inherit_offspring():
     })
 
 
-@app.route("/save", methods=["POST"])
+@app.route("/save", methods=["POST", "OPTIONS"])
 def save_model():
     with lock:
         model.save(MODEL_PATH)
     return jsonify({"status": "saved", "path": MODEL_PATH})
 
 
-@app.route("/reset", methods=["POST"])
+@app.route("/reset", methods=["POST", "OPTIONS"])
 def reset_model():
     global model
     with lock:
