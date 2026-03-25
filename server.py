@@ -15,19 +15,15 @@ ACTIONS = [
     "explorar",
     "caçar",
     "pescar",
-    "coletar madeira",
-    "coletar pedra",
+    "coletar recursos",
     "construir base",
     "armazenar",
-    "descansar na base",
-    "descansar fora",
+    "descansar",
     "curar",
     "acasalar",
     "ajudar aliado",
     "trocar informações",
     "fugir",
-    "coletar carne",
-    "coletar frutas",
     "reparar base",
     "trocar recursos",
 ]
@@ -95,20 +91,16 @@ PROTOTYPE_STATES = {
     "explorar": _state_template(food=0.15, water=0.15, energy=0.75, hydration=0.7, satiation=0.7),
     "caçar": _state_template(food=0.05, water=0.18, weapon=1.0, courage=0.8, hydration=0.7, satiation=0.35),
     "pescar": _state_template(food=0.08, water=0.22, base=0.0, hydration=0.74, satiation=0.4),
-    "coletar madeira": _state_template(wood=0.05, site=0.65, base=1.0, energy=0.72),
-    "coletar pedra": _state_template(stone=0.05, site=0.65, base=1.0, energy=0.72),
+    "coletar recursos": _state_template(food=0.1, wood=0.1, stone=0.1, site=0.55, base=0.5, energy=0.68),
     "construir base": _state_template(wood=0.85, stone=0.85, site=0.35, base=0.0, energy=0.72),
     "armazenar": _state_template(food=0.8, water=0.8, wood=0.55, stone=0.55, base=1.0),
-    "descansar na base": _state_template(energy=0.08, base=1.0, hydration=0.52, satiation=0.52),
-    "descansar fora": _state_template(energy=0.08, base=0.0, hydration=0.52, satiation=0.52),
+    "descansar": _state_template(energy=0.08, base=0.6, hydration=0.52, satiation=0.52, health=0.4),
     "curar": _state_template(health=0.2, energy=0.35, base=1.0),
     "acasalar": _state_template(health=0.9, energy=0.82, hydration=0.82, satiation=0.82, base=1.0, age=0.4),
     "ajudar aliado": _state_template(food=0.7, water=0.7, energy=0.72, population=0.8, base=1.0),
     "trocar informações": _state_template(food=0.45, water=0.45, energy=0.68, population=0.9, wisdom=0.85),
     "fugir": _state_template(predator=1.0, courage=0.35, energy=0.62),
-    "coletar carne": _state_template(food=0.0, water=0.25, satiation=0.25, energy=0.65),
-    "coletar frutas": _state_template(food=0.0, water=0.25, satiation=0.3, energy=0.7),
-    "reparar base": _state_template(wood=0.4, stone=0.4, base=1.0, site=0.4, energy=0.65),
+        "reparar base": _state_template(wood=0.4, stone=0.4, base=1.0, site=0.4, energy=0.65),
     "trocar recursos": _state_template(food=0.5, water=0.5, wood=0.5, stone=0.5, base=1.0, population=0.85),
 }
 
@@ -131,19 +123,18 @@ def _apply_state_conditioned_bias(states: np.ndarray, q_values: np.ndarray):
         if hydration < 0.25:
             q_values[i, ACTION_INDEX["beber água"]] += 2.6 + float(lessons.get("waterUrgency", 0)) * 0.18
         if satiation < 0.3:
-            q_values[i, ACTION_INDEX["coletar frutas"]] += 1.2 + float(lessons.get("foodUrgency", 0)) * 0.12
-            q_values[i, ACTION_INDEX["coletar carne"]] += 1.0 + float(lessons.get("foodUrgency", 0)) * 0.1
+            q_values[i, ACTION_INDEX["coletar recursos"]] += 1.5 + float(lessons.get("foodUrgency", 0)) * 0.16
             q_values[i, ACTION_INDEX["caçar"]] += 0.6 + has_weapon * 0.8
         if energy < 0.18:
-            q_values[i, ACTION_INDEX["descansar na base" if has_base > 0.5 else "descansar fora"]] += 2.2
+            q_values[i, ACTION_INDEX["descansar"]] += 2.4 + has_base * 0.6
         if health < 0.35:
             q_values[i, ACTION_INDEX["curar"]] += 2.4
         if predator > 0.5:
             q_values[i, ACTION_INDEX["fugir"]] += 3.0 + (1.0 - courage) * 0.8
         if site > 0.2 and wood < 0.35:
-            q_values[i, ACTION_INDEX["coletar madeira"]] += 1.3 + float(lessons.get("baseUrgency", 0)) * 0.1
+            q_values[i, ACTION_INDEX["coletar recursos"]] += 1.2 + float(lessons.get("baseUrgency", 0)) * 0.12
         if site > 0.2 and stone < 0.35:
-            q_values[i, ACTION_INDEX["coletar pedra"]] += 1.3 + float(lessons.get("baseUrgency", 0)) * 0.1
+            q_values[i, ACTION_INDEX["coletar recursos"]] += 1.2 + float(lessons.get("baseUrgency", 0)) * 0.12
         if has_base > 0.5 and (wood > 0.35 or stone > 0.35 or food > 0.5 or water > 0.5):
             q_values[i, ACTION_INDEX["armazenar"]] += 0.8
         if wood > 0.7 and stone > 0.7 and has_base < 0.5:
@@ -232,12 +223,12 @@ def _train_on_cycle_knowledge(payload: dict):
 
     lesson_to_action = {
         "waterUrgency": "beber água",
-        "foodUrgency": "coletar frutas",
+        "foodUrgency": "coletar recursos",
         "baseUrgency": "construir base",
         "weaponUrgency": "caçar",
         "shareUrgency": "trocar informações",
         "reproductionUrgency": "acasalar",
-        "longevityUrgency": "descansar na base",
+        "longevityUrgency": "descansar",
     }
     for lesson_key, action_name in lesson_to_action.items():
         strength = float(lessons.get(lesson_key, 0) or 0)
