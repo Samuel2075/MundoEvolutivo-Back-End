@@ -342,8 +342,11 @@ def config():
     })
 
 
-@app.route("/decide_batch", methods=["POST"])
+@app.route("/decide_batch", methods=["POST", "OPTIONS"])
 def decide_batch():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     data = request.get_json(force=True) or {}
     states = np.array(data.get("states", []), dtype=np.float32)
     if states.ndim != 2 or states.shape[1] != STATE_SIZE:
@@ -359,9 +362,11 @@ def decide_batch():
         "q_values": q_values.tolist(),
     })
 
-
 @app.route("/train_batch", methods=["POST", "OPTIONS"])
 def train_batch():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     data = request.get_json(force=True) or {}
     states = np.array(data.get("states", []), dtype=np.float32)
     actions = np.array(data.get("actions", []), dtype=np.int32)
@@ -394,6 +399,9 @@ def train_batch():
 
 @app.route("/inherit_cycle", methods=["POST", "OPTIONS"])
 def inherit_cycle():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     payload = request.get_json(force=True) or {}
     with lock:
         sample_count, loss = _train_on_cycle_knowledge(payload)
@@ -409,6 +417,9 @@ def inherit_cycle():
 
 @app.route("/inherit_offspring", methods=["POST", "OPTIONS"])
 def inherit_offspring():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     payload = request.get_json(force=True) or {}
     with lock:
         sample_count, loss = _train_on_offspring_knowledge(payload)
@@ -423,6 +434,9 @@ def inherit_offspring():
 
 @app.route("/save", methods=["POST", "OPTIONS"])
 def save_model():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     with lock:
         model.save(MODEL_PATH)
     return jsonify({"status": "saved", "path": MODEL_PATH})
@@ -430,6 +444,9 @@ def save_model():
 
 @app.route("/reset", methods=["POST", "OPTIONS"])
 def reset_model():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     global model
     with lock:
         model = create_model()
