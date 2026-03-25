@@ -439,5 +439,6 @@ def reset_model():
 
 
 if __name__ == "__main__":
-    print("Servidor TensorFlow dos humanos em http://127.0.0.1:5000")
-    app.run(host="0.0.0.0", port=5000, threaded=True)
+    port = int(os.environ.get("PORT", 5000))
+    print(f"Servidor TensorFlow dos humanos em http://0.0.0.0:{port}")
+    app.run(host="0.0.0.0", port=port, threaded=True)
