@@ -169,8 +169,8 @@ def _apply_state_conditioned_bias(states: np.ndarray, q_values: np.ndarray):
         if wood > 0.7 and stone > 0.7 and has_base < 0.5:
             q_values[i, ACTION_INDEX["construir base"]] += 1.9 + float(lessons.get("baseUrgency", 0)) * 0.14
         if population > 0.7 and wisdom > 0.55:
-            q_values[i, ACTION_INDEX["trocar informações"]] += 0.8 + float(lessons.get("shareUrgency", 0)) * 0.1
-            q_values[i, ACTION_INDEX["ajudar aliado"]] += 0.5
+            q_values[i, ACTION_INDEX["trocar informações"]] += 0.18 + float(lessons.get("shareUrgency", 0)) * 0.04
+            q_values[i, ACTION_INDEX["ajudar aliado"]] += 0.22
         if has_weapon > 0.5 and courage > 0.55 and satiation < 0.6:
             q_values[i, ACTION_INDEX["caçar"]] += 1.0
         if hydration > 0.45 and satiation > 0.45 and energy > 0.5 and age > 0.2:
