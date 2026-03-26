@@ -154,12 +154,12 @@ def _apply_state_conditioned_bias(states: np.ndarray, q_values: np.ndarray):
         if satiation < 0.3:
             q_values[i, ACTION_INDEX["coletar recursos"]] += 1.5 + float(lessons.get("foodUrgency", 0)) * 0.16
             q_values[i, ACTION_INDEX["caçar"]] += 0.6 + has_weapon * 0.8
-        if energy < 0.18:
-            q_values[i, ACTION_INDEX["descansar"]] += 2.4 + has_base * 0.6
+        if energy < 0.14:
+            q_values[i, ACTION_INDEX["descansar"]] += 1.0 + has_base * 0.25
         if health < 0.35:
             q_values[i, ACTION_INDEX["curar"]] += 2.4
-        if predator > 0.5:
-            q_values[i, ACTION_INDEX["fugir"]] += 3.0 + (1.0 - courage) * 0.8
+        if predator > 0.7:
+            q_values[i, ACTION_INDEX["fugir"]] += 1.3 + (1.0 - courage) * 0.35
         if site > 0.2 and wood < 0.35:
             q_values[i, ACTION_INDEX["coletar recursos"]] += 1.2 + float(lessons.get("baseUrgency", 0)) * 0.12
         if site > 0.2 and stone < 0.35:
@@ -168,9 +168,9 @@ def _apply_state_conditioned_bias(states: np.ndarray, q_values: np.ndarray):
             q_values[i, ACTION_INDEX["armazenar"]] += 0.8
         if wood > 0.7 and stone > 0.7 and has_base < 0.5:
             q_values[i, ACTION_INDEX["construir base"]] += 1.9 + float(lessons.get("baseUrgency", 0)) * 0.14
-        if population > 0.7 and wisdom > 0.55:
+        if population > 0.8 and wisdom > 0.65:
             q_values[i, ACTION_INDEX["trocar informações"]] += 0.18 + float(lessons.get("shareUrgency", 0)) * 0.04
-            q_values[i, ACTION_INDEX["ajudar aliado"]] += 0.22
+            q_values[i, ACTION_INDEX["ajudar aliado"]] += 0.18
         if has_weapon > 0.5 and courage > 0.55 and satiation < 0.6:
             q_values[i, ACTION_INDEX["caçar"]] += 1.0
         if hydration > 0.45 and satiation > 0.45 and energy > 0.5 and age > 0.2:
