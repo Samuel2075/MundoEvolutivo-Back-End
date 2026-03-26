@@ -43,7 +43,11 @@ ACTIONS = [
 ACTION_SIZE = len(ACTIONS)
 ACTION_INDEX = {name: idx for idx, name in enumerate(ACTIONS)}
 GAMMA = 0.92
-lock = threading.Lock()
+
+# Evita deadlock em chamadas reentrantes com threaded=True
+lock = threading.RLock()
+
+BIAS_DECAY = 0.75
 
 cycle_memory = {
     "inherited_cycles": 0,
@@ -53,6 +57,9 @@ cycle_memory = {
     "last_payload": None,
     "offspring_patterns": {name: 0.0 for name in ACTIONS},
 }
+
+_cycles_since_save = 0
+SAVE_EVERY_N_CYCLES = 3
 
 
 def create_model():
@@ -84,6 +91,11 @@ def load_or_create_model():
 
 model = load_or_create_model()
 
+target_model = load_or_create_model()
+target_model.set_weights(model.get_weights())
+_train_step_counter = 0
+TARGET_UPDATE_STEPS = 50
+
 
 def _state_template(*, health=1.0, satiation=1.0, hydration=1.0, energy=1.0,
                     food=0.3, water=0.3, wood=0.0, stone=0.0, weapon=0.0,
@@ -113,12 +125,16 @@ PROTOTYPE_STATES = {
     "ajudar aliado": _state_template(food=0.7, water=0.7, energy=0.72, population=0.8, base=1.0),
     "trocar informações": _state_template(food=0.45, water=0.45, energy=0.68, population=0.9, wisdom=0.85),
     "fugir": _state_template(predator=1.0, courage=0.35, energy=0.62),
-        "reparar base": _state_template(wood=0.4, stone=0.4, base=1.0, site=0.4, energy=0.65),
+    "reparar base": _state_template(wood=0.4, stone=0.4, base=1.0, site=0.4, energy=0.65),
     "trocar recursos": _state_template(food=0.5, water=0.5, wood=0.5, stone=0.5, base=1.0, population=0.85),
 }
 
 
 def _apply_state_conditioned_bias(states: np.ndarray, q_values: np.ndarray):
+    """
+    Bias contextual aplicado APENAS na inferencia (decide_batch).
+    FIX 2: NAO chamar dentro do train_batch — senao o target Bellman fica inflado.
+    """
     action_bias = cycle_memory.get("action_bias", {})
     lessons = cycle_memory.get("lessons", {})
     mentor_actions = cycle_memory.get("mentor_actions", {})
@@ -183,17 +199,19 @@ def _apply_state_conditioned_bias(states: np.ndarray, q_values: np.ndarray):
 
 
 def _train_on_cycle_knowledge(payload: dict):
+    global _cycles_since_save
+
     archive = payload.get("archive", {}) or {}
     run_summary = payload.get("run_summary", {}) or {}
     lessons = archive.get("lessons", {}) or {}
     action_totals = archive.get("action_totals", {}) or run_summary.get("action_totals", {}) or {}
     mentors = archive.get("mentors", []) or []
 
-    # Reset and accumulate cycle memory priors
+    old_bias = cycle_memory.get("action_bias", {})
     cycle_memory["inherited_cycles"] = int(archive.get("cycles", 0) or payload.get("ended_cycle", 0) or 0)
     cycle_memory["lessons"] = {k: float(v or 0) for k, v in lessons.items()}
     cycle_memory["last_payload"] = payload
-    cycle_memory["action_bias"] = {name: 0.0 for name in ACTIONS}
+    cycle_memory["action_bias"] = {name: old_bias.get(name, 0.0) * BIAS_DECAY for name in ACTIONS}
     cycle_memory["mentor_actions"] = {name: 0.0 for name in ACTIONS}
 
     max_total = max([float(v or 0) for v in action_totals.values()] + [1.0])
@@ -201,7 +219,8 @@ def _train_on_cycle_knowledge(payload: dict):
         idx = ACTION_INDEX.get(action_name)
         if idx is None:
             continue
-        cycle_memory["action_bias"][action_name] = min(1.8, (float(total) / max_total) * 1.6)
+        new_val = min(1.8, (float(total) / max_total) * 1.6)
+        cycle_memory["action_bias"][action_name] = min(2.0, cycle_memory["action_bias"][action_name] + new_val)
 
     for mentor in mentors:
         legacy = float(mentor.get("legacyScore", 0) or 0)
@@ -256,12 +275,19 @@ def _train_on_cycle_knowledge(payload: dict):
                 push_sample(action_name, base)
 
     if not states:
-        return 0
+        return 0, 0.0
 
     states_np = np.stack(states).astype(np.float32)
     targets_np = np.stack(targets).astype(np.float32)
     history = model.fit(states_np, targets_np, epochs=4, verbose=0)
-    return len(states_np), float(history.history.get("loss", [0.0])[-1])
+    loss = float(history.history.get("loss", [0.0])[-1])
+
+    _cycles_since_save += 1
+    if _cycles_since_save >= SAVE_EVERY_N_CYCLES:
+        model.save(MODEL_PATH)
+        _cycles_since_save = 0
+
+    return len(states_np), loss
 
 
 def _train_on_offspring_knowledge(payload: dict):
@@ -279,7 +305,10 @@ def _train_on_offspring_knowledge(payload: dict):
     cycle_memory["offspring_patterns"] = {name: 0.0 for name in ACTIONS}
     for action_name, bias in parental_action_bias.items():
         if action_name in ACTION_INDEX:
-            cycle_memory["offspring_patterns"][action_name] = max(cycle_memory["offspring_patterns"][action_name], float(np.clip(bias, 0.0, 1.5)))
+            cycle_memory["offspring_patterns"][action_name] = max(
+                cycle_memory["offspring_patterns"][action_name],
+                float(np.clip(bias, 0.0, 1.5))
+            )
 
     current_q = model.predict(np.stack(list(PROTOTYPE_STATES.values())), verbose=0)
     prototype_names = list(PROTOTYPE_STATES.keys())
@@ -308,7 +337,10 @@ def _train_on_offspring_knowledge(payload: dict):
         proto[17] = norm_bias
         proto[18] = norm_legacy
         target = np.array(name_to_row[action_name], copy=True)
-        target[ACTION_INDEX[action_name]] = max(target[ACTION_INDEX[action_name]], 1.2 + float(strength) * 2.8 + norm_knowledge * 0.6)
+        target[ACTION_INDEX[action_name]] = max(
+            target[ACTION_INDEX[action_name]],
+            1.2 + float(strength) * 2.8 + norm_knowledge * 0.6
+        )
         states.append(proto)
         targets.append(target)
 
@@ -329,6 +361,8 @@ def status():
         "language": "pt-BR",
         "model_path": MODEL_PATH,
         "inherited_cycles": cycle_memory.get("inherited_cycles", 0),
+        "train_steps": _train_step_counter,
+        "target_network_syncs": _train_step_counter // TARGET_UPDATE_STEPS,
     })
 
 
@@ -351,9 +385,11 @@ def decide_batch():
     states = np.array(data.get("states", []), dtype=np.float32)
     if states.ndim != 2 or states.shape[1] != STATE_SIZE:
         return jsonify({"error": f"states must be [N, {STATE_SIZE}]"}), 400
+
     with lock:
         q_values = model.predict(states, verbose=0)
-        _apply_state_conditioned_bias(states, q_values)
+
+    _apply_state_conditioned_bias(states, q_values)
     actions = np.argmax(q_values, axis=1).astype(int).tolist()
     action_names = [ACTIONS[idx] for idx in actions]
     return jsonify({
@@ -361,6 +397,7 @@ def decide_batch():
         "action_names": action_names,
         "q_values": q_values.tolist(),
     })
+
 
 @app.route("/train_batch", methods=["POST", "OPTIONS"])
 def train_batch():
@@ -384,8 +421,7 @@ def train_batch():
 
     with lock:
         current_q = model.predict(states, verbose=0)
-        next_q = model.predict(next_states, verbose=0)
-        _apply_state_conditioned_bias(next_states, next_q)
+        next_q = target_model.predict(next_states, verbose=0)
         targets = np.array(current_q, copy=True)
         for i in range(batch_size):
             action_idx = int(actions[i])
@@ -394,6 +430,11 @@ def train_batch():
                 targets[i, action_idx] = float(rewards[i]) + GAMMA * future
         history = model.fit(states, targets, epochs=1, verbose=0)
         loss = float(history.history.get("loss", [0.0])[-1])
+
+        global _train_step_counter
+        _train_step_counter += 1
+        if _train_step_counter % TARGET_UPDATE_STEPS == 0:
+            target_model.set_weights(model.get_weights())
     return jsonify({"status": "trained", "batch_size": batch_size, "loss": loss})
 
 
@@ -405,7 +446,6 @@ def inherit_cycle():
     payload = request.get_json(force=True) or {}
     with lock:
         sample_count, loss = _train_on_cycle_knowledge(payload)
-        model.save(MODEL_PATH)
     return jsonify({
         "status": "ok",
         "message": "Memória ancestral incorporada ao TensorFlow.",
@@ -423,7 +463,6 @@ def inherit_offspring():
     payload = request.get_json(force=True) or {}
     with lock:
         sample_count, loss = _train_on_offspring_knowledge(payload)
-        model.save(MODEL_PATH)
     return jsonify({
         "status": "ok",
         "message": "Herança micro incorporada ao TensorFlow.",
@@ -447,9 +486,13 @@ def reset_model():
     if request.method == "OPTIONS":
         return ("", 204)
 
-    global model
+    global model, _cycles_since_save, target_model, _train_step_counter
     with lock:
         model = create_model()
+        target_model = create_model()
+        target_model.set_weights(model.get_weights())
+        _cycles_since_save = 0
+        _train_step_counter = 0
         cycle_memory["inherited_cycles"] = 0
         cycle_memory["action_bias"] = {name: 0.0 for name in ACTIONS}
         cycle_memory["lessons"] = {}
@@ -462,4 +505,5 @@ def reset_model():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"Servidor TensorFlow dos humanos em http://0.0.0.0:{port}")
+    # Para producao: gunicorn -w 1 --timeout 120 server:app
     app.run(host="0.0.0.0", port=port, threaded=True)
